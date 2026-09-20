@@ -19,7 +19,15 @@
 - [Key Files Explained](#-key-files-explained)
 - [Why uv is Fast](#-why-uv-is-fast)
 - [uv pip vs uv add](#-uv-pip-vs-uv-add)
-- [Advanced uv Features (Often Missed)](#-advanced-uv-features-often-missed)
+- [Advanced uv Features](#-advanced-uv-features)
+  - [🐍 uv python — Manage Python Versions](#-uv-python--manage-python-versions)
+  - [🛠️ uv tool / uvx — Run CLI Tools in Isolation](#️-uv-tool--uvx--run-cli-tools-in-isolation)
+  - [🌳 uv tree — Inspect Dependency Graph](#-uv-tree--inspect-dependency-graph)
+  - [🧪 Dev Dependencies (--dev)](#-dev-dependencies---dev)
+  - [🏗️ CI/CD Flags (--frozen, --no-dev)](#️-cicd-flags---frozen---no-dev)
+  - [📦 uv run --with — Temporary Dependency](#-uv-run---with--temporary-dependency)
+  - [🧹 uv remove Also Cleans Transitive Dependencies](#-uv-remove-also-cleans-transitive-dependencies)
+  - [📌 Don't Run uv init Inside an Existing Repo](#-dont-run-uv-init-inside-an-existing-repo)
 - [Cloning a Repository: What to Do](#-cloning-a-repository-what-to-do)
 - [Cheat Sheets](#-cheat-sheets)
 - [Golden Rules](#-golden-rules)
@@ -227,99 +235,227 @@ Project C → requests
 
 ---
 
-## 🧩 Advanced uv Features (Often Missed)
+## 🧩 Advanced uv Features
 
-<details>
-<summary><strong>🐍 uv python — Manage Python versions</strong></summary>
+These are the features most people miss when learning uv. Each one solves a real problem.
+
+### 🐍 `uv python` — Manage Python Versions
+
+uv can install and manage Python interpreters directly, replacing tools like `pyenv`.
+
+**Commands:**
+
+```bash
+uv python install 3.12        # Install Python 3.12
+uv python install 3.11 3.12   # Install multiple versions
+uv python list                # View available and installed versions
+uv python pin 3.12            # Pin project to 3.12 (.python-version)
+```
+
+**Example:** Your project needs Python 3.12, but your system default is 3.10. No manual Python installation needed:
 
 ```bash
 uv python install 3.12
-uv python list
 uv python pin 3.12
+# All subsequent uv commands automatically use 3.12
+uv run python --version
+# Output: Python 3.12.x
 ```
 
-Replaces `pyenv` for many use cases.
+---
 
-</details>
+### 🛠️ `uv tool` / `uvx` — Run CLI Tools in Isolation
 
-<details>
-<summary><strong>🛠️ uv tool / uvx — Run CLI tools in isolation</strong></summary>
+`uvx` is an alias for `uv tool run`. It runs tools in temporary isolated environments — like `npx` for Python. Nothing gets installed into your project.
+
+**Commands:**
 
 ```bash
-uv tool run ruff check .
-uv tool install ruff
-uvx ruff check .          # shortcut for `uv tool run`
-uvx black .
+uvx ruff check .              # Run without installing
+uvx black .                   # Format code
+uvx ruff@0.6.0 check .        # Run a specific version
+uv tool install ruff          # Install persistently to PATH
+uv tool upgrade ruff          # Upgrade an installed tool
+uv tool list                  # List installed tools
 ```
 
-Like `npx` for Python.
-
-</details>
-
-<details>
-<summary><strong>🌳 uv tree — Inspect dependency graph</strong></summary>
+**Example:** You want to lint your code with `ruff`, but you don't want it in your project dependencies:
 
 ```bash
-uv tree
+uvx ruff check .
+# After it finishes, the temporary environment is cleaned up.
+# Your project's .venv has no ruff package.
 ```
 
-Equivalent to `pipdeptree` but built-in.
+---
 
-</details>
+### 🌳 `uv tree` — Inspect Dependency Graph
 
-<details>
-<summary><strong>🧪 Dev dependencies (--dev)</strong></summary>
+Visualize your project's dependency tree. Equivalent to `pipdeptree`, but built-in.
+
+**Commands:**
+
+```bash
+uv tree                       # Full dependency tree
+uv tree --depth 2             # Limit depth
+uv tree --invert requests     # Reverse: who depends on requests?
+```
+
+**Example output:**
+
+```
+my-project v0.1.0
+├── fastapi v0.120.0
+│   ├── pydantic v2.10.0
+│   └── starlette v0.41.0
+├── uvicorn v0.35.0
+│   └── click v8.1.0
+└── openai v1.107.0
+    └── httpx v0.28.0
+```
+
+---
+
+### 🧪 Dev Dependencies (`--dev`)
+
+Development dependencies like `pytest` and `ruff` are recorded separately and are not installed in production.
+
+**Commands:**
+
+```bash
+uv add --dev pytest ruff      # Add dev dependencies
+uv remove --dev pytest        # Remove dev dependency
+uv sync --no-dev              # Skip dev deps (production)
+```
+
+**Example:** Add pytest for testing, but exclude it from production builds:
 
 ```bash
 uv add --dev pytest
-uv add --dev ruff
+uv sync --no-dev
+# pytest is NOT installed, but fastapi and uvicorn are.
 ```
 
-Recorded separately in `pyproject.toml`. Not installed in production.
+Dev dependencies are stored in `pyproject.toml` under `[dependency-groups]`:
 
-</details>
+```toml
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6"
+]
+```
 
-<details>
-<summary><strong>🏗️ CI/CD flags (--frozen, --no-dev)</strong></summary>
+---
+
+### 🏗️ CI/CD Flags (`--frozen`, `--no-dev`)
+
+Use these flags in CI/CD pipelines to ensure reproducible, production-ready environments.
+
+**Commands:**
 
 ```bash
-uv sync --frozen      # don't update lockfile
-uv sync --no-dev      # skip dev dependencies
+uv sync --frozen              # Use uv.lock as-is, don't update it
+uv sync --no-dev              # Skip dev dependencies
+uv sync --frozen --no-dev     # Production-ready sync
 ```
 
-Useful for reproducible builds.
+**Example GitHub Actions workflow:**
 
-</details>
+```yaml
+- name: Install uv
+  run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-<details>
-<summary><strong>📦 uv run --with — Temporary dependency</strong></summary>
+- name: Sync dependencies
+  run: uv sync --frozen --no-dev
+
+- name: Run tests
+  run: uv run pytest
+```
+
+**Behavior:**
+
+| Flag | Effect |
+|------|--------|
+| `--frozen` | Errors if `uv.lock` needs updating. Guarantees the lockfile is respected exactly. |
+| `--no-dev` | Skips dev dependencies. Smaller, faster installs for production. |
+
+---
+
+### 📦 `uv run --with` — Temporary Dependency
+
+Run a script with a one-off dependency without modifying your project.
+
+**Commands:**
 
 ```bash
 uv run --with requests python script.py
+uv run --with 'rich>12,<13' python report.py
+uv run --with pandas --with numpy python analysis.py
 ```
 
-Run a command with a one-off dependency.
+**Example:** You have a quick script that needs `requests`, but you don't want to add it to your project:
 
-</details>
+```bash
+uv run --with requests python fetch_data.py
+# requests is installed in a temporary overlay, not in pyproject.toml
+```
 
-<details>
-<summary><strong>🧹 uv remove also cleans transitive dependencies</strong></summary>
+---
 
-- `pip uninstall requests` removes only `requests`.
-- `uv remove requests` also removes now-unused transitive dependencies.
+### 🧹 `uv remove` Also Cleans Transitive Dependencies
 
-Keeps your environment clean automatically.
+This is a key difference from `pip uninstall`.
 
-</details>
+**Comparison:**
 
-<details>
-<summary><strong>📌 Don't run uv init inside an existing repo</strong></summary>
+```bash
+pip uninstall requests        # Removes only requests
+uv remove requests            # Also removes unused transitive dependencies
+```
 
-Running `uv init` inside a repo that already has `pyproject.toml` will create a **second project definition**, confusing the tooling.
+**Example:** Suppose `requests` depends on `urllib3` and `certifi`. If nothing else uses them:
 
-Always inspect the repo first.
+```bash
+uv remove requests
+# uv also removes urllib3 and certifi if they are no longer needed.
+```
 
-</details>
+This keeps your environment clean automatically. `pip` leaves orphaned packages behind.
+
+---
+
+### 📌 Don't Run `uv init` Inside an Existing Repo
+
+If a repository already has `pyproject.toml`, running `uv init` will error or create a conflicting project definition.
+
+**What happens:**
+
+```bash
+cd existing-repo/
+uv init
+# error: Project is already initialized in /path/to/existing-repo (pyproject.toml file exists)
+```
+
+**Correct approach:** Inspect the repo first, then choose the right command.
+
+```bash
+# 1. Check what files exist
+ls
+
+# 2. If it's a uv project (pyproject.toml + uv.lock)
+uv sync
+
+# 3. If it's a pip-style repo (requirements.txt)
+uv pip install -r requirements.txt
+
+# 4. If it has pyproject.toml but no uv.lock
+cat README.md
+cat pyproject.toml
+# Follow the documented tool (Poetry, Hatch, PDM, etc.)
+```
+
+> ⚠️ **Never run `uv init` on a cloned repository.** Respect the existing workflow.
 
 ---
 
@@ -391,8 +527,7 @@ Respect the repo's existing workflow unless converting is part of your task.
 
 ## 📋 Cheat Sheets
 
-<details>
-<summary><strong>🐍 Traditional pip Cheat Sheet</strong></summary>
+### 🐍 Traditional pip Cheat Sheet
 
 ```bash
 # Create environment
@@ -417,10 +552,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-</details>
-
-<details>
-<summary><strong>🚀 uv Cheat Sheet</strong></summary>
+### 🚀 uv Cheat Sheet
 
 ```bash
 # Install uv
@@ -458,10 +590,7 @@ uv pip install -r requirements.txt
 uv pip freeze > requirements.txt
 ```
 
-</details>
-
-<details>
-<summary><strong>📥 After Cloning a Repo Cheat Sheet</strong></summary>
+### 📥 After Cloning a Repo Cheat Sheet
 
 ```bash
 # 1. Clone
@@ -493,8 +622,6 @@ cat README.md
 cat pyproject.toml
 # Follow documented tool (Poetry, Hatch, PDM, etc.)
 ```
-
-</details>
 
 ---
 
